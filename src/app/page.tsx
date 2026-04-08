@@ -122,9 +122,19 @@ export default function LauncherPage() {
       }
     }).catch(() => {});
 
-    // Fetch server config and news from the website
-    const base = p.webUrl.replace(/\/+$/, "");
-    fetch(`${base}/api/client-config`)
+  }, []);
+
+  // Re-fetch server config and news whenever the Web URL changes (after hydration).
+  // Clears resolved values immediately so the launch button disables while in flight.
+  useEffect(() => {
+    if (!hydrated) return;
+    setResolvedApiUrl("");
+    setResolvedServer("");
+    const base = webUrl.replace(/\/+$/, "");
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    fetch(`${base}/api/client-config`, { signal })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((cfg: ClientConfig) => {
         setResolvedApiUrl(cfg.apiUrl);
@@ -132,11 +142,13 @@ export default function LauncherPage() {
       })
       .catch(() => { /* best-effort; launch button stays disabled */ });
 
-    fetch(`${base}/api/articles?limit=2`)
+    fetch(`${base}/api/articles?limit=2`, { signal })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((articles: NewsArticle[]) => setNews(articles))
       .catch(() => { /* best-effort */ });
-  }, []);
+
+    return () => controller.abort();
+  }, [hydrated, webUrl]);
 
   // Persist whenever any relevant value changes (after hydration)
   useEffect(() => {
