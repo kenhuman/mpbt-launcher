@@ -68,10 +68,10 @@ pub async fn launch_game(
         email    = info.email,
     );
 
-    // 4. Write a per-user play.pcgi into the game's directory.
-    //    Using the username as part of the filename avoids a race condition
-    //    when two launcher instances are started close together: each writes
-    //    its own file and the game receives its own unique path via argv[1].
+    // 4. Write a per-launch play.pcgi into the game's directory.
+    //    The filename includes both the sanitised username and the current
+    //    process ID so that multiple simultaneous launches — even by the same
+    //    user — each get their own file with no risk of overwriting each other.
     let exe_path = std::path::Path::new(&game_exe);
     let game_dir = exe_path
         .parent()
@@ -82,9 +82,9 @@ pub async fn launch_game(
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
         .collect();
-    let pcgi_path = game_dir.join(format!("play_{safe_user}.pcgi"));
+    let pcgi_path = game_dir.join(format!("play_{safe_user}_{}.pcgi", std::process::id()));
     std::fs::write(&pcgi_path, pcgi)
-        .map_err(|e| format!("Failed to write play.pcgi: {e}"))?;
+        .map_err(|e| format!("Failed to write {}: {e}", pcgi_path.display()))?;
 
     // 5. Deploy (or remove) shim and launch
     crate::game::launch_game(exe_path, windowed, &pcgi_path)?;

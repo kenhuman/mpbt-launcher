@@ -3,7 +3,7 @@
 /// When `windowed` is true:
 ///   • The ddraw.dll shim is written into the game directory so the game runs
 ///     in a window (Windows DLL search order picks it up before system ddraw).
-///   • A permanently-patched copy of the EXE (`<name>.windowed`) is created
+///   • A permanently-patched copy of the EXE (`<stem>_windowed.exe`) is created
 ///     once alongside the original.  The patched copy has the single-instance
 ///     guard removed (JZ → JMP, one byte) so multiple simultaneous instances
 ///     are allowed.  The original is never modified.
@@ -110,118 +110,6 @@ pub fn launch_game(
     }
 
     std::process::Command::new(&exe_to_launch)
-        .arg(pcgi_path)
-        .current_dir(game_dir)
-        .spawn()
-        .map_err(|e| format!("Failed to launch game: {e}"))?;
-
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn launch_game(
-    _game_exe: &std::path::Path,
-    _windowed: bool,
-    _pcgi_path: &std::path::Path,
-) -> Result<(), String> {
-    Err("MPBT only runs on Windows".to_string())
-}
-
-/// DLL bytes baked in at compile time.  `native/build.bat` must have been run
-/// before `cargo build` / `tauri dev`.
-#[cfg(target_os = "windows")]
-static DDRAW_DLL_BYTES: &[u8] = include_bytes!("../../native/ddraw.dll");
-
-/// Windows ERROR_SHARING_VIOLATION — the file is open by another process.
-#[cfg(target_os = "windows")]
-const ERROR_SHARING_VIOLATION: i32 = 32;
-
-/// Patch or unpatch the single-instance guard in the game EXE.
-///
-/// WinMain calls `FindWindowA("MPBattleTech", "Multiplayer BattleTech")` and,
-/// if a window is found, brings it to the foreground and exits — preventing a
-/// second instance.  The guard is a single `JZ` byte (`0x74`) that is changed
-/// to `JMP` (`0xEB`) to bypass it.
-///
-/// We locate the guard by scanning for the distinctive surrounding bytes rather
-/// than a hardcoded file offset, so the patch works across minor EXE variants.
-///
-/// Pattern: TEST EAX,EAX; Jcc +0x15; PUSH 1; PUSH EAX
-///          85 C0 [74|EB] 15 6A 01 50
-///                  ^--- patch target (index 2)
-///
-/// `enable == true`  → sets the byte to `0xEB` (JMP, bypasses the guard)
-/// `enable == false` → restores it to `0x74` (JZ, single-instance behaviour)
-/// The file is only written when the byte actually needs to change.
-/// If the pattern is not found the function returns `Ok(())` silently.
-#[cfg(target_os = "windows")]
-fn set_single_instance_patch(exe: &std::path::Path, enable: bool) -> Result<(), String> {
-    const PATCH_IDX: usize = 2;
-    const BYTE_JZ:   u8    = 0x74;
-    const BYTE_JMP:  u8    = 0xEB;
-
-    let want    = if enable { BYTE_JMP } else { BYTE_JZ };
-    let present = if enable { BYTE_JZ  } else { BYTE_JMP };
-
-    let mut data = std::fs::read(exe)
-        .map_err(|e| format!("Failed to read game EXE: {e}"))?;
-
-    // Scan for the 7-byte pattern; the Jcc byte (index 2) can be either value.
-    let found = data.windows(7).enumerate().find(|(_, w)| {
-        w[0] == 0x85 && w[1] == 0xC0
-            && (w[PATCH_IDX] == BYTE_JZ || w[PATCH_IDX] == BYTE_JMP)
-            && w[3] == 0x15 && w[4] == 0x6A && w[5] == 0x01 && w[6] == 0x50
-    });
-
-    let Some((offset, _)) = found else {
-        // Unknown EXE variant — skip silently.
-        return Ok(());
-    };
-
-    let patch_offset = offset + PATCH_IDX;
-    if data[patch_offset] == present {
-        data[patch_offset] = want;
-        std::fs::write(exe, &data)
-            .map_err(|e| format!("Failed to write patched game EXE: {e}"))?;
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-pub fn launch_game(
-    game_exe: &std::path::Path,
-    windowed: bool,
-    pcgi_path: &std::path::Path,
-) -> Result<(), String> {
-    let game_dir = game_exe.parent().ok_or("game_exe has no parent directory")?;
-    let dest_ddraw = game_dir.join("ddraw.dll");
-
-    if windowed {
-        // Windowed mode: write the embedded shim bytes into the game dir.
-        // If another instance already deployed the DLL and currently has it
-        // open, Windows may report a sharing violation (os error 32); treat
-        // that specific case as non-fatal and continue launching.
-        if let Err(e) = std::fs::write(&dest_ddraw, DDRAW_DLL_BYTES) {
-            if e.raw_os_error() != Some(ERROR_SHARING_VIOLATION) {
-                return Err(format!("Failed to write ddraw.dll to game dir: {e}"));
-            }
-        }
-
-        // Patch out the single-instance guard so multiple windowed instances
-        // can run simultaneously.
-        set_single_instance_patch(game_exe, true)?;
-    } else {
-        // Full-screen mode: remove the ddraw shim and restore the
-        // single-instance guard to preserve original behaviour.
-        if dest_ddraw.exists() {
-            let _ = std::fs::remove_file(&dest_ddraw);
-        }
-
-        set_single_instance_patch(game_exe, false)?;
-    }
-
-    // Launch game with play.pcgi as argv[1] and game directory as cwd.
-    std::process::Command::new(game_exe)
         .arg(pcgi_path)
         .current_dir(game_dir)
         .spawn()
