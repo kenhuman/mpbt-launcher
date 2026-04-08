@@ -1,6 +1,6 @@
 {
   "name": "mpbt-launcher",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Game launcher for MPBT Solaris VII Revival — handles authentication, configuration, and launching MPBTWIN.EXE",
   "author": "Ken Human",
   "license": "AGPL-3.0-only",
