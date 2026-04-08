@@ -1,12 +1,12 @@
 # Automatically bumps the version in all three config files when a PR targeting
 # master is opened or reopened.
 #
-# Default behaviour: minor bump (e.g. 0.1.0 → 0.2.0)
+# Default behaviour: patch bump (e.g. 0.1.0 → 0.1.1)
 #
 # Override by including one of these anywhere in the PR description:
 #
-#   @version patch            0.1.0 → 0.1.1
-#   @version minor            0.1.0 → 0.2.0   (default if omitted)
+#   @version patch            0.1.0 → 0.1.1   (default if omitted)
+#   @version minor            0.1.0 → 0.2.0
 #   @version major            0.1.0 → 1.0.0
 #   @version 1.2.3            sets an explicit version
 #
@@ -53,16 +53,16 @@ jobs:
             NEW="$DIRECTIVE"
           elif [ "${DIRECTIVE,,}" = "major" ]; then
             NEW="$((MAJ+1)).0.0"
-          elif [ "${DIRECTIVE,,}" = "patch" ]; then
-            NEW="${MAJ}.${MIN}.$((PAT+1))"
-          else
-            # "minor" keyword, unknown keyword, or no directive at all → minor bump
+          elif [ "${DIRECTIVE,,}" = "minor" ]; then
             NEW="${MAJ}.$((MIN+1)).0"
+          else
+            # "patch" keyword, unknown keyword, or no directive at all → patch bump
+            NEW="${MAJ}.${MIN}.$((PAT+1))"
           fi
 
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
           echo "new=$NEW"         >> "$GITHUB_OUTPUT"
-          echo "directive=${DIRECTIVE:-<none — defaulting to minor>}"
+          echo "directive=${DIRECTIVE:-<none — defaulting to patch>}"
           echo "Bumping $CURRENT → $NEW"
 
       # ── Update the three version files ────────────────────────────────────
