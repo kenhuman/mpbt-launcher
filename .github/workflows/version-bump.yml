@@ -1,5 +1,6 @@
-# Automatically bumps the version in all three config files when a PR targeting
+# Automatically bumps the version in all four config files when a PR targeting
 # master is opened or reopened.
+# (package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml, src-tauri/Cargo.lock)
 #
 # Default behaviour: patch bump (e.g. 0.1.0 → 0.1.1)
 #

@@ -14,6 +14,10 @@
 #[cfg(target_os = "windows")]
 static DDRAW_DLL_BYTES: &[u8] = include_bytes!("../../native/ddraw.dll");
 
+/// Windows ERROR_SHARING_VIOLATION — the file is open by another process.
+#[cfg(target_os = "windows")]
+const ERROR_SHARING_VIOLATION: i32 = 32;
+
 #[cfg(target_os = "windows")]
 pub fn launch_game(
     game_exe: &std::path::Path,
@@ -29,7 +33,7 @@ pub fn launch_game(
         // open, Windows may report a sharing violation (os error 32); treat
         // that specific case as non-fatal and continue launching.
         if let Err(e) = std::fs::write(&dest_ddraw, DDRAW_DLL_BYTES) {
-            if e.raw_os_error() != Some(32) {
+            if e.raw_os_error() != Some(ERROR_SHARING_VIOLATION) {
                 return Err(format!("Failed to write ddraw.dll to game dir: {e}"));
             }
         }
