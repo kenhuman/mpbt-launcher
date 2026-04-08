@@ -32,6 +32,13 @@ interface UpdateInfo {
   install: () => Promise<void>;
 }
 
+function normalizeWebUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `http://${trimmed}`;
+}
+
 function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -56,6 +63,7 @@ function savePrefs(prefs: Prefs) {
 }
 
 type Status = "idle" | "authenticating" | "launching" | "launched" | "error";
+type ConfigState = "idle" | "loading" | "ready" | "error";
 
 export default function LauncherPage() {
   const [username,     setUsername]     = useState("");
@@ -70,6 +78,8 @@ export default function LauncherPage() {
   // Resolved at runtime from /api/client-config; not user-editable
   const [resolvedApiUrl,    setResolvedApiUrl]    = useState("");
   const [resolvedServer,    setResolvedServer]    = useState("");
+  const [configState,       setConfigState]       = useState<ConfigState>("idle");
+  const [configError,       setConfigError]       = useState<string | null>(null);
 
   const [status, setStatus] = useState<Status>("idle");
   const [error,  setError]  = useState<string | null>(null);
@@ -128,9 +138,30 @@ export default function LauncherPage() {
   // Clears resolved values immediately so the launch button disables while in flight.
   useEffect(() => {
     if (!hydrated) return;
+    const base = normalizeWebUrl(webUrl);
+
     setResolvedApiUrl("");
     setResolvedServer("");
-    const base = webUrl.replace(/\/+$/, "");
+    setConfigState("loading");
+    setConfigError(null);
+
+    if (!base) {
+      setConfigState("error");
+      setConfigError("Enter a Web URL like http://localhost:3000.");
+      setNews([]);
+      return;
+    }
+
+    try {
+      const parsed = new URL(base);
+      if (!parsed.hostname) throw new Error("missing-hostname");
+    } catch {
+      setConfigState("error");
+      setConfigError("Enter a valid Web URL like http://localhost:3000.");
+      setNews([]);
+      return;
+    }
+
     const controller = new AbortController();
     const { signal } = controller;
 
@@ -139,13 +170,21 @@ export default function LauncherPage() {
       .then((cfg: ClientConfig) => {
         setResolvedApiUrl(cfg.apiUrl);
         setResolvedServer(cfg.gameServer);
+        setConfigState("ready");
       })
-      .catch(() => { /* best-effort; launch button stays disabled */ });
+      .catch(() => {
+        if (signal.aborted) return;
+        setConfigState("error");
+        setConfigError(`Couldn't load launcher config from ${base}.`);
+      });
 
     fetch(`${base}/api/articles?limit=2`, { signal })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((articles: NewsArticle[]) => setNews(articles))
-      .catch(() => { /* best-effort */ });
+      .catch(() => {
+        if (signal.aborted) return;
+        setNews([]);
+      });
 
     return () => controller.abort();
   }, [hydrated, webUrl]);
@@ -186,6 +225,7 @@ export default function LauncherPage() {
 
   const busy = status === "authenticating" || status === "launching";
   const configReady = resolvedApiUrl !== "" && resolvedServer !== "";
+  const normalizedWebBase = normalizeWebUrl(webUrl);
 
   async function handleInstallUpdate() {
     if (!pendingUpdate) return;
@@ -205,8 +245,6 @@ export default function LauncherPage() {
       window.open(url, "_blank");
     }
   }
-
-  const webBase = webUrl.replace(/\/+$/, "");
 
   return (
     <main className="flex h-screen overflow-hidden bg-neutral-950">
@@ -332,6 +370,19 @@ export default function LauncherPage() {
               </p>
             )}
 
+            {configError && !busy && (
+              <div className="rounded-md border border-yellow-800 bg-yellow-950/40 px-3 py-2 text-sm text-yellow-300">
+                <p>{configError}</p>
+                <button
+                  type="button"
+                  onClick={() => setWebUrl(DEFAULT_WEB_URL)}
+                  className="mt-2 text-xs font-semibold text-yellow-200 underline underline-offset-2 hover:text-yellow-100"
+                >
+                  Reset Web URL to default
+                </button>
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={busy || !configReady}
@@ -341,8 +392,10 @@ export default function LauncherPage() {
                 ? "Authenticating…"
                 : status === "launching"
                 ? "Launching…"
-                : !configReady
+                : configState === "loading"
                 ? "Connecting…"
+                : !configReady
+                ? "Launch Unavailable"
                 : "Launch Game"}
             </button>
           </form>
@@ -363,7 +416,7 @@ export default function LauncherPage() {
             >
               <button
                 type="button"
-                onClick={() => openUrl(`${webBase}/articles/${article.slug}`)}
+                onClick={() => openUrl(`${normalizedWebBase}/articles/${article.slug}`)}
                 className="text-sm font-semibold text-green-400 hover:text-green-300 transition-colors text-left"
               >
                 {article.title}
