@@ -190,9 +190,9 @@ export default function LauncherPage() {
   const webBase = webUrl.replace(/\/+$/, "");
 
   return (
-    <main className="flex min-h-screen bg-neutral-950">
+    <main className="flex h-screen overflow-hidden bg-neutral-950">
       {/* ── Left column: login controls ── */}
-      <div className="flex flex-col gap-4 p-6 w-[360px] shrink-0 justify-center">
+      <div className="flex flex-col gap-4 p-6 w-[360px] shrink-0 justify-center overflow-y-auto">
         {/* Header */}
         <div className="text-center">
           <h1 className="text-4xl font-bold tracking-widest text-green-400">
@@ -332,7 +332,7 @@ export default function LauncherPage() {
       </div>
 
       {/* ── Right column: news ── */}
-      <div className="flex flex-col flex-1 p-6 border-l border-neutral-800 gap-3 justify-center">
+      <div className="flex flex-col flex-1 p-6 border-l border-neutral-800 gap-3 justify-center overflow-hidden">
         <p className="text-xs font-semibold uppercase tracking-widest text-neutral-600">
           News
         </p>
