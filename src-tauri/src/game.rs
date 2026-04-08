@@ -49,10 +49,6 @@ fn windowed_exe(original: &std::path::Path) -> Result<std::path::PathBuf, String
     let patched = original
         .with_file_name(format!("{stem}_windowed.exe"));
 
-    if patched.exists() {
-        return Ok(patched);
-    }
-
     const PATCH_IDX: usize = 2;
     const BYTE_JZ:   u8    = 0x74;
     const BYTE_JMP:  u8    = 0xEB;
@@ -73,8 +69,16 @@ fn windowed_exe(original: &std::path::Path) -> Result<std::path::PathBuf, String
     // If pattern not found the copy is still created — it just won't be patched,
     // which is fine (launch will still work, just no multi-instance).
 
-    std::fs::write(&patched, &data)
-        .map_err(|e| format!("Failed to write windowed EXE copy: {e}"))?;
+    // Use create_new (O_CREAT | O_EXCL) so only one process wins the race.
+    // If another launcher got here first, AlreadyExists means the copy is ready
+    // and we can use it as-is.
+    use std::io::Write as _;
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&patched) {
+        Ok(mut f) => f.write_all(&data)
+            .map_err(|e| format!("Failed to write windowed EXE copy: {e}"))?,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => { /* another process created it */ }
+        Err(e) => return Err(format!("Failed to create windowed EXE copy: {e}")),
+    }
 
     Ok(patched)
 }

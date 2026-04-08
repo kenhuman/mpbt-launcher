@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, FormEvent, InputHTMLAttributes, ChangeEventHandler } from "react";
+import { useState, useEffect, useRef, FormEvent, InputHTMLAttributes, ChangeEventHandler } from "react";
 
 // The single URL of the MPBT website — all config is derived from it at runtime.
 const DEFAULT_WEB_URL = (process.env.NEXT_PUBLIC_WEB_URL ?? "http://localhost:3000").replace(/\/+$/, "");
@@ -78,6 +78,10 @@ export default function LauncherPage() {
   const [pendingUpdate, setPendingUpdate] = useState<UpdateInfo | null>(null);
   const [updateInstalling, setUpdateInstalling] = useState(false);
 
+  // Synchronous guard — prevents a double-click from firing two launches before
+  // the first setStatus("authenticating") re-render has a chance to disable the button.
+  const launchingRef = useRef(false);
+
   // News state
   const [news, setNews] = useState<NewsArticle[]>([]);
 
@@ -142,6 +146,8 @@ export default function LauncherPage() {
 
   async function handleLaunch(e: FormEvent) {
     e.preventDefault();
+    if (launchingRef.current) return;
+    launchingRef.current = true;
     setError(null);
     setStatus("authenticating");
 
@@ -162,6 +168,7 @@ export default function LauncherPage() {
     } catch (err) {
       setError(String(err));
       setStatus("error");
+      launchingRef.current = false;
     }
   }
 
