@@ -2,8 +2,9 @@
 # installer.  Triggered by every push to master (i.e. merged PR).
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
-#   PROD_SERVER    — game server host:port  e.g. "mpbt.example.com:2000"
-#   PROD_API_URL   — auth API base URL      e.g. "https://api.mpbt.example.com"
+#   PROD_WEB_URL   — website base URL, e.g. "https://play-solaris.com"
+#                    the launcher fetches /api/client-config from here at runtime
+#                    to discover the API URL and game server address
 #
 # These are NOT sensitive (they are baked into the JS bundle in plaintext) but
 # are kept as secrets so production addresses stay out of source control.
@@ -83,10 +84,10 @@ jobs:
           # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: password you set when generating the key
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Production defaults baked into the Next.js bundle at compile time.
-          # Set PROD_SERVER and PROD_API_URL in repo secrets before releasing.
-          NEXT_PUBLIC_DEFAULT_SERVER: ${{ secrets.PROD_SERVER }}
-          NEXT_PUBLIC_DEFAULT_API_URL: ${{ secrets.PROD_API_URL }}
+          # Single website URL — the launcher fetches /api/client-config from here
+          # at runtime to discover the API URL and game server.
+          # Set PROD_WEB_URL in repo secrets before releasing.
+          NEXT_PUBLIC_WEB_URL: ${{ secrets.PROD_WEB_URL }}
         with:
           tagName: ${{ steps.version.outputs.tag }}
           releaseName: 'MPBT Launcher ${{ steps.version.outputs.tag }}'

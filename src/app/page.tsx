@@ -2,22 +2,34 @@
 
 import { useState, useEffect, FormEvent, InputHTMLAttributes, ChangeEventHandler } from "react";
 
-// Defaults are injected at build time from NEXT_PUBLIC_* environment variables.
-// In development these fall back to local values; for production builds the CI
-// workflow supplies them from repository secrets.
-const DEFAULT_SERVER  = process.env.NEXT_PUBLIC_DEFAULT_SERVER  ?? "127.0.0.1:2000";
-const DEFAULT_API_URL = process.env.NEXT_PUBLIC_DEFAULT_API_URL ?? "http://localhost:3001";
+// The single URL of the MPBT website — all config is derived from it at runtime.
+const DEFAULT_WEB_URL = (process.env.NEXT_PUBLIC_WEB_URL ?? "http://localhost:3000").replace(/\/+$/, "");
 const DEFAULT_GAME    = "C:\\MPBT\\MPBTWIN.EXE";
 const STORAGE_KEY     = "mpbt_launcher_prefs";
+
+interface ClientConfig {
+  apiUrl: string;
+  gameServer: string;
+}
 
 interface Prefs {
   username: string;
   password: string;
-  server: string;
-  apiUrl: string;
+  webUrl: string;
   gameExe: string;
   savePassword: boolean;
   windowed: boolean;
+}
+
+interface NewsArticle {
+  slug: string;
+  title: string;
+  summary: string;
+}
+
+interface UpdateInfo {
+  version: string;
+  install: () => Promise<void>;
 }
 
 function loadPrefs(): Prefs {
@@ -28,15 +40,14 @@ function loadPrefs(): Prefs {
       return {
         username:     p.username     ?? "",
         password:     p.savePassword ? (p.password ?? "") : "",
-        server:       p.server       ?? DEFAULT_SERVER,
-        apiUrl:       p.apiUrl       ?? DEFAULT_API_URL,
+        webUrl:       p.webUrl       ?? DEFAULT_WEB_URL,
         gameExe:      p.gameExe      ?? DEFAULT_GAME,
         savePassword: p.savePassword ?? false,
         windowed:     p.windowed     ?? false,
       };
     }
   } catch { /* ignore */ }
-  return { username: "", password: "", server: DEFAULT_SERVER, apiUrl: DEFAULT_API_URL, gameExe: DEFAULT_GAME, savePassword: false, windowed: false };
+  return { username: "", password: "", webUrl: DEFAULT_WEB_URL, gameExe: DEFAULT_GAME, savePassword: false, windowed: false };
 }
 
 function savePrefs(prefs: Prefs) {
@@ -49,24 +60,33 @@ type Status = "idle" | "authenticating" | "launching" | "launched" | "error";
 export default function LauncherPage() {
   const [username,     setUsername]     = useState("");
   const [password,     setPassword]     = useState("");
-  const [server,       setServer]       = useState(DEFAULT_SERVER);
-  const [apiUrl,       setApiUrl]       = useState(DEFAULT_API_URL);
+  const [webUrl,       setWebUrl]       = useState(DEFAULT_WEB_URL);
   const [gameExe,      setGameExe]      = useState(DEFAULT_GAME);
   const [savePassword, setSavePassword] = useState(false);
   const [windowed,     setWindowed]     = useState(false);
   const [advanced,     setAdvanced]     = useState(false);
   const [hydrated,     setHydrated]     = useState(false);
 
+  // Resolved at runtime from /api/client-config; not user-editable
+  const [resolvedApiUrl,    setResolvedApiUrl]    = useState("");
+  const [resolvedServer,    setResolvedServer]    = useState("");
+
   const [status, setStatus] = useState<Status>("idle");
   const [error,  setError]  = useState<string | null>(null);
+
+  // Update banner state
+  const [pendingUpdate, setPendingUpdate] = useState<UpdateInfo | null>(null);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+
+  // News state
+  const [news, setNews] = useState<NewsArticle[]>([]);
 
   // Load persisted prefs on first render (client-only)
   useEffect(() => {
     const p = loadPrefs();
     setUsername(p.username);
     setPassword(p.password);
-    setServer(p.server);
-    setApiUrl(p.apiUrl);
+    setWebUrl(p.webUrl);
     setGameExe(p.gameExe);
     setSavePassword(p.savePassword);
     setWindowed(p.windowed);
@@ -80,29 +100,45 @@ export default function LauncherPage() {
       );
     }
 
-    // Check for launcher updates (no-op outside Tauri)
+    // Check for launcher updates — show an in-UI banner instead of window.confirm
     import("@tauri-apps/plugin-updater").then(async ({ check }) => {
       try {
         const update = await check();
         if (!update) return;
-        const ok = window.confirm(
-          `Launcher update ${update.version} is available.\n\nInstall now? The launcher will restart automatically.`
-        );
-        if (!ok) return;
-        await update.downloadAndInstall();
-        const { relaunch } = await import("@tauri-apps/plugin-process");
-        await relaunch();
+        setPendingUpdate({
+          version: update.version,
+          install: async () => {
+            await update.downloadAndInstall();
+            const { relaunch } = await import("@tauri-apps/plugin-process");
+            await relaunch();
+          },
+        });
       } catch {
         // Silently ignore — update check is best-effort
       }
     }).catch(() => {});
+
+    // Fetch server config and news from the website
+    const base = p.webUrl.replace(/\/+$/, "");
+    fetch(`${base}/api/client-config`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((cfg: ClientConfig) => {
+        setResolvedApiUrl(cfg.apiUrl);
+        setResolvedServer(cfg.gameServer);
+      })
+      .catch(() => { /* best-effort; launch button stays disabled */ });
+
+    fetch(`${base}/api/articles?limit=2`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((articles: NewsArticle[]) => setNews(articles))
+      .catch(() => { /* best-effort */ });
   }, []);
 
   // Persist whenever any relevant value changes (after hydration)
   useEffect(() => {
     if (!hydrated) return;
-    savePrefs({ username, password, server, apiUrl, gameExe, savePassword, windowed });
-  }, [hydrated, username, password, server, apiUrl, gameExe, savePassword, windowed]);
+    savePrefs({ username, password, webUrl, gameExe, savePassword, windowed });
+  }, [hydrated, username, password, webUrl, gameExe, savePassword, windowed]);
 
   async function handleLaunch(e: FormEvent) {
     e.preventDefault();
@@ -117,8 +153,8 @@ export default function LauncherPage() {
       await invoke("launch_game", {
         username,
         password,
-        server,
-        apiUrl,
+        server: resolvedServer,
+        apiUrl: resolvedApiUrl,
         gameExe,
         windowed,
       });
@@ -130,12 +166,35 @@ export default function LauncherPage() {
   }
 
   const busy = status === "authenticating" || status === "launching";
+  const configReady = resolvedApiUrl !== "" && resolvedServer !== "";
+
+  async function handleInstallUpdate() {
+    if (!pendingUpdate) return;
+    setUpdateInstalling(true);
+    try {
+      await pendingUpdate.install();
+    } catch {
+      setUpdateInstalling(false);
+    }
+  }
+
+  async function openUrl(url: string) {
+    try {
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(url);
+    } catch {
+      window.open(url, "_blank");
+    }
+  }
+
+  const webBase = webUrl.replace(/\/+$/, "");
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-neutral-950 p-8">
-      <div className="w-full max-w-sm">
+    <main className="flex h-screen overflow-hidden bg-neutral-950">
+      {/* ── Left column: login controls ── */}
+      <div className="flex flex-col gap-4 p-6 w-[360px] shrink-0 justify-center overflow-y-auto">
         {/* Header */}
-        <div className="mb-8 text-center">
+        <div className="text-center">
           <h1 className="text-4xl font-bold tracking-widest text-green-400">
             MPBT
           </h1>
@@ -143,6 +202,27 @@ export default function LauncherPage() {
             Solaris VII Revival
           </p>
         </div>
+
+        {/* Update banner */}
+        {pendingUpdate && (
+          <div className="rounded-lg border border-yellow-700 bg-yellow-950/40 px-4 py-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-yellow-300">
+                Update available — v{pendingUpdate.version}
+              </p>
+              <p className="text-xs text-yellow-600 mt-0.5">
+                The launcher will restart automatically after installing.
+              </p>
+            </div>
+            <button
+              onClick={handleInstallUpdate}
+              disabled={updateInstalling}
+              className="shrink-0 rounded bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 px-3 py-1.5 text-xs font-bold text-black transition-colors"
+            >
+              {updateInstalling ? "Installing…" : "Install"}
+            </button>
+          </div>
+        )}
 
         {status === "launched" ? (
           <div className="rounded-xl border border-green-800 bg-green-950/30 p-6 text-center text-green-400">
@@ -154,7 +234,7 @@ export default function LauncherPage() {
         ) : (
           <form
             onSubmit={handleLaunch}
-            className="flex flex-col gap-4 rounded-xl border border-neutral-800 bg-neutral-900 p-8"
+            className="flex flex-col gap-4 rounded-xl border border-neutral-800 bg-neutral-900 p-6"
           >
             <Field
               label="Username"
@@ -209,19 +289,11 @@ export default function LauncherPage() {
             {advanced && (
               <div className="flex flex-col gap-4 border-t border-neutral-800 pt-4">
                 <Field
-                  label="Game Server"
-                  id="server"
-                  value={server}
-                  onChange={(e) => setServer(e.target.value)}
-                  placeholder="127.0.0.1:2000"
-                  disabled={busy}
-                />
-                <Field
-                  label="Auth API URL"
-                  id="apiUrl"
-                  value={apiUrl}
-                  onChange={(e) => setApiUrl(e.target.value)}
-                  placeholder="http://localhost:3001"
+                  label="Web URL"
+                  id="webUrl"
+                  value={webUrl}
+                  onChange={(e) => setWebUrl(e.target.value)}
+                  placeholder="http://localhost:3000"
                   disabled={busy}
                 />
                 <Field
@@ -243,16 +315,47 @@ export default function LauncherPage() {
 
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || !configReady}
               className="mt-2 rounded-md bg-green-600 py-2.5 font-bold text-black transition-colors hover:bg-green-500 disabled:bg-neutral-700 disabled:text-neutral-500"
             >
               {status === "authenticating"
                 ? "Authenticating…"
                 : status === "launching"
                 ? "Launching…"
+                : !configReady
+                ? "Connecting…"
                 : "Launch Game"}
             </button>
           </form>
+        )}
+
+      </div>
+
+      {/* ── Right column: news ── */}
+      <div className="flex flex-col flex-1 p-6 border-l border-neutral-800 gap-3 justify-center overflow-hidden">
+        <p className="text-xs font-semibold uppercase tracking-widest text-neutral-600">
+          News
+        </p>
+        {news.length > 0 ? (
+          news.map((article) => (
+            <div
+              key={article.slug}
+              className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3"
+            >
+              <button
+                type="button"
+                onClick={() => openUrl(`${webBase}/articles/${article.slug}`)}
+                className="text-sm font-semibold text-green-400 hover:text-green-300 transition-colors text-left"
+              >
+                {article.title}
+              </button>
+              <p className="mt-1 text-xs text-neutral-500 leading-relaxed">
+                {article.summary}
+              </p>
+            </div>
+          ))
+        ) : (
+          <p className="text-xs text-neutral-700">No articles available.</p>
         )}
       </div>
     </main>
