@@ -1,17 +1,21 @@
-# Automatically bumps the version in all five config files when a PR targeting
-# master is opened or reopened.
-# (package.json, package-lock.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml, src-tauri/Cargo.lock)
+# Bumps the version in all five config files when a PR targeting master is
+# opened or reopened — BUT ONLY if one of these conditions is true:
 #
-# Default behaviour: patch bump (e.g. 0.1.0 → 0.1.1)
+#   1. The PR description contains an explicit @version directive (see below), OR
+#   2. A git tag for the current version (v{current}) already exists, meaning
+#      that version has been released and the code in this PR must ship as a
+#      new version so auto-update fires for existing users.
 #
-# Override by including one of these anywhere in the PR description:
+# If neither condition is met the workflow exits silently (no bump, no commit).
 #
-#   @version patch            0.1.0 → 0.1.1   (default if omitted)
+# @version directives (place anywhere in the PR body):
+#
+#   @version patch            0.1.0 → 0.1.1   (default when directive present but no keyword)
 #   @version minor            0.1.0 → 0.2.0
 #   @version major            0.1.0 → 1.0.0
 #   @version 1.2.3            sets an explicit version
 #
-# The commit is tagged "[skip ci]" so the release workflow does not fire.
+# The bump commit is tagged "[skip ci]" so the release workflow does not fire.
 
 name: Version bump
 
@@ -45,6 +49,24 @@ jobs:
           DIRECTIVE=$(printf '%s' "$PR_BODY" | grep -oiP '(?<=@version )\S+' | head -1)
 
           CURRENT=$(jq -r '.version' src-tauri/tauri.conf.json)
+
+          # Condition 1: explicit @version directive in PR body
+          HAS_DIRECTIVE=false
+          [ -n "$DIRECTIVE" ] && HAS_DIRECTIVE=true
+
+          # Condition 2: a release tag for the current version already exists
+          git fetch --tags --quiet
+          TAG_EXISTS=false
+          git tag -l "v${CURRENT}" | grep -q . && TAG_EXISTS=true
+
+          if [ "$HAS_DIRECTIVE" = "false" ] && [ "$TAG_EXISTS" = "false" ]; then
+            echo "No @version directive and tag v${CURRENT} does not exist — skipping bump."
+            echo "should_bump=false" >> "$GITHUB_OUTPUT"
+            echo "current=$CURRENT"  >> "$GITHUB_OUTPUT"
+            echo "new=$CURRENT"      >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           MAJ=$(echo "$CURRENT" | cut -d. -f1)
           MIN=$(echo "$CURRENT" | cut -d. -f2)
           PAT=$(echo "$CURRENT" | cut -d. -f3)
@@ -57,18 +79,19 @@ jobs:
           elif [ "${DIRECTIVE,,}" = "minor" ]; then
             NEW="${MAJ}.$((MIN+1)).0"
           else
-            # "patch" keyword, unknown keyword, or no directive at all → patch bump
+            # "patch" keyword, unknown keyword, or no directive (tag-triggered) → patch bump
             NEW="${MAJ}.${MIN}.$((PAT+1))"
           fi
 
+          echo "should_bump=true" >> "$GITHUB_OUTPUT"
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
           echo "new=$NEW"         >> "$GITHUB_OUTPUT"
-          echo "directive=${DIRECTIVE:-<none — defaulting to patch>}"
+          echo "directive=${DIRECTIVE:-<none — tag-triggered patch bump>}"
           echo "Bumping $CURRENT → $NEW"
 
       # ── Update the three version files ────────────────────────────────────
       - name: Apply version bump
-        if: steps.resolve.outputs.current != steps.resolve.outputs.new
+        if: steps.resolve.outputs.should_bump == 'true' && steps.resolve.outputs.current != steps.resolve.outputs.new
         env:
           V: ${{ steps.resolve.outputs.new }}
         run: |
@@ -104,7 +127,7 @@ jobs:
 
       # ── Commit and push ────────────────────────────────────────────────────
       - name: Commit and push
-        if: steps.resolve.outputs.current != steps.resolve.outputs.new
+        if: steps.resolve.outputs.should_bump == 'true' && steps.resolve.outputs.current != steps.resolve.outputs.new
         env:
           V: ${{ steps.resolve.outputs.new }}
         run: |
