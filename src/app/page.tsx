@@ -117,9 +117,9 @@ export default function LauncherPage() {
     }).catch(() => {});
 
     // Fetch latest 2 news articles from the web API
-    const webBase = (process.env.NEXT_PUBLIC_DEFAULT_API_URL ?? "http://localhost:3001")
-      .replace(/\/api\/?$/, "");
-    fetch(`${webBase}/api/articles?limit=2`)
+    const apiBase = (process.env.NEXT_PUBLIC_DEFAULT_API_URL ?? "http://localhost:3001")
+      .replace(/\/+$/, "");
+    fetch(`${apiBase}/articles?limit=2`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((articles: NewsArticle[]) => setNews(articles))
       .catch(() => { /* best-effort */ });
@@ -177,8 +177,11 @@ export default function LauncherPage() {
     }
   }
 
-  const webBase = (process.env.NEXT_PUBLIC_DEFAULT_API_URL ?? "http://localhost:3001")
-    .replace(/\/api\/?$/, "");
+  const webBase = (process.env.NEXT_PUBLIC_WEB_URL ??
+    (process.env.NEXT_PUBLIC_DEFAULT_API_URL ?? "http://localhost:3001")
+      .replace(/\/+$/, "")
+      .replace(/\/\/api\./, "//")
+  ).replace(/\/+$/, "");
 
   return (
     <main className="flex min-h-screen bg-neutral-950">

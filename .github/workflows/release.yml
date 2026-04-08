@@ -3,7 +3,8 @@
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   PROD_SERVER    — game server host:port  e.g. "mpbt.example.com:2000"
-#   PROD_API_URL   — auth API base URL      e.g. "https://api.mpbt.example.com"
+#   PROD_API_URL   — auth/data API base URL e.g. "https://api.mpbt.example.com"
+#   PROD_WEB_URL   — web frontend base URL  e.g. "https://mpbt.example.com"
 #
 # These are NOT sensitive (they are baked into the JS bundle in plaintext) but
 # are kept as secrets so production addresses stay out of source control.
@@ -87,6 +88,7 @@ jobs:
           # Set PROD_SERVER and PROD_API_URL in repo secrets before releasing.
           NEXT_PUBLIC_DEFAULT_SERVER: ${{ secrets.PROD_SERVER }}
           NEXT_PUBLIC_DEFAULT_API_URL: ${{ secrets.PROD_API_URL }}
+          NEXT_PUBLIC_WEB_URL: ${{ secrets.PROD_WEB_URL }}
         with:
           tagName: ${{ steps.version.outputs.tag }}
           releaseName: 'MPBT Launcher ${{ steps.version.outputs.tag }}'
