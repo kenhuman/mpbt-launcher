@@ -14,6 +14,23 @@ name: Release
 on:
   push:
     branches: [master]
+    paths:
+      # Rust source and config
+      - 'src-tauri/src/**'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - 'src-tauri/tauri.conf.json'
+      - 'src-tauri/build.rs'
+      - 'src-tauri/icons/**'
+      # Frontend source
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'next.config.*'
+      - 'tsconfig*.json'
+      - 'tailwind.config.*'
+      # Native DLL build
+      - 'windowed/**'
   workflow_dispatch:
 
 permissions:
