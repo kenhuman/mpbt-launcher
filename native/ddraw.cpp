@@ -961,11 +961,24 @@ static void PatchGameIAT()
     }
 }
 
+// True once ReadConfig() has been called (guards against multiple calls).
+static bool g_configLoaded = false;
+
+// Ensure config is loaded exactly once.  Safe to call from any context
+// (DirectDrawCreate, SetCooperativeLevel) because by that point the loader
+// lock is no longer held.
+static void EnsureConfig() {
+    if (g_configLoaded) return;
+    g_configLoaded = true;
+    ReadConfig();
+}
+
 BOOL WINAPI DllMain(HINSTANCE, DWORD fdwReason, LPVOID)
 {
     if (fdwReason == DLL_PROCESS_ATTACH) {
+        // Keep DllMain minimal — no file I/O here.
+        // Config is loaded lazily on the first DirectDrawCreate call.
         DbLog("ddraw_shim loaded");
-        ReadConfig();
         PatchGameIAT();
     }
     return TRUE;
@@ -980,6 +993,7 @@ extern "C" {
 HRESULT WINAPI DirectDrawCreate(GUID* lpGUID, LPDIRECTDRAW* lplpDD,
                                  IUnknown* pUnkOuter) {
     if (!lplpDD) return DDERR_INVALIDPARAMS;
+    EnsureConfig();
     *lplpDD = new FakeDD();
     return S_OK;
 }

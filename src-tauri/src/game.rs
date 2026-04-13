@@ -117,10 +117,12 @@ fn ddraw_ini_content(display_mode: &str) -> Option<String> {
             // Expect "window-WxH" e.g. "window-1920x1080"
             if let Some(size) = other.strip_prefix("window-") {
                 if let Some((w, h)) = size.split_once('x') {
-                    return Some(format!("[display]\nwidth={}\nheight={}\n", w, h));
+                    if let (Ok(w), Ok(h)) = (w.parse::<u32>(), h.parse::<u32>()) {
+                        return Some(format!("[display]\nwidth={}\nheight={}\n", w, h));
+                    }
                 }
             }
-            // Unknown windowed mode — use plain windowed at game resolution
+            // Unknown or malformed windowed mode — use plain windowed at game resolution
             Some("[display]\n".into())
         }
     }
