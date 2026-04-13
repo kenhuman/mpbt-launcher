@@ -107,18 +107,44 @@ fn windowed_exe(original: &std::path::Path) -> Result<std::path::PathBuf, String
     Ok(patched)
 }
 
+/// Return the `[display]` section content for `ddraw.ini` given a display mode
+/// string, or `None` if the mode is "fullscreen" (no shim needed).
+fn ddraw_ini_content(display_mode: &str) -> Option<String> {
+    match display_mode {
+        "fullscreen" => None,
+        "window-fullscreen" => Some("[display]\nmode=fullscreen-window\n".into()),
+        other => {
+            // Expect "window-WxH" e.g. "window-1920x1080"
+            if let Some(size) = other.strip_prefix("window-") {
+                if let Some((w, h)) = size.split_once('x') {
+                    return Some(format!("[display]\nwidth={}\nheight={}\n", w, h));
+                }
+            }
+            // Unknown windowed mode — use plain windowed at game resolution
+            Some("[display]\n".into())
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 pub fn launch_game(
     game_exe: &std::path::Path,
-    windowed: bool,
+    display_mode: &str,
     pcgi_path: &std::path::Path,
 ) -> Result<(), String> {
     let game_dir = game_exe.parent().ok_or("game_exe has no parent directory")?;
     let dest_ddraw = game_dir.join("ddraw.dll");
+    let dest_ini   = game_dir.join("ddraw.ini");
 
     let exe_to_launch: std::path::PathBuf;
 
-    if windowed {
+    if let Some(ini_content) = ddraw_ini_content(display_mode) {
+        // Windowed mode: write config, deploy shim, use patched EXE.
+
+        // Write ddraw.ini (mode/resolution config for the shim).
+        std::fs::write(&dest_ini, &ini_content)
+            .map_err(|e| format!("Failed to write ddraw.ini: {e}"))?;
+
         // Write the ddraw shim.  Sharing violation is non-fatal — another
         // instance already placed it.
         if let Err(e) = std::fs::write(&dest_ddraw, DDRAW_DLL_BYTES) {
@@ -130,10 +156,9 @@ pub fn launch_game(
         // Use the patched copy so we never touch a running EXE.
         exe_to_launch = windowed_exe(game_exe)?;
     } else {
-        // Full-screen mode: remove the ddraw shim and use the original EXE.
-        if dest_ddraw.exists() {
-            let _ = std::fs::remove_file(&dest_ddraw);
-        }
+        // Full-screen mode: remove the ddraw shim and config, use original EXE.
+        if dest_ddraw.exists() { let _ = std::fs::remove_file(&dest_ddraw); }
+        if dest_ini.exists()   { let _ = std::fs::remove_file(&dest_ini); }
         exe_to_launch = game_exe.to_path_buf();
     }
 
@@ -149,7 +174,7 @@ pub fn launch_game(
 #[cfg(not(target_os = "windows"))]
 pub fn launch_game(
     _game_exe: &std::path::Path,
-    _windowed: bool,
+    _display_mode: &str,
     _pcgi_path: &std::path::Path,
 ) -> Result<(), String> {
     Err("MPBT only runs on Windows".to_string())

@@ -23,15 +23,17 @@ pub async fn login(
 }
 
 /// Called on launcher startup: remove any previously-placed ddraw.dll shim
-/// from the game directory so a direct run of MPBTWIN.EXE always uses the
-/// system DirectDraw (full-screen mode).
+/// and ddraw.ini config from the game directory so a direct run of MPBTWIN.EXE
+/// always uses the system DirectDraw (full-screen mode).
 #[tauri::command]
 pub fn cleanup_ddraw(game_exe: String) {
     let exe_path = std::path::Path::new(&game_exe);
     if let Some(game_dir) = exe_path.parent() {
-        let shim = game_dir.join("ddraw.dll");
-        if shim.exists() {
-            let _ = std::fs::remove_file(shim);
+        for name in &["ddraw.dll", "ddraw.ini"] {
+            let path = game_dir.join(name);
+            if path.exists() {
+                let _ = std::fs::remove_file(path);
+            }
         }
     }
 }
@@ -46,7 +48,7 @@ pub async fn launch_game(
     server: String,   // e.g. "127.0.0.1:2000"
     api_url: String,  // e.g. "http://localhost:3001"
     game_exe: String, // e.g. "C:\\MPBT\\MPBTWIN.EXE"
-    windowed: bool,   // true → use ddraw shim for windowed mode
+    display_mode: String, // e.g. "fullscreen", "window-1920x1080", "window-fullscreen"
 ) -> Result<(), String> {
     // 1. Authenticate and retrieve email for play.pcgi
     let info = do_login(&api_url, &username, &password).await?;
@@ -87,7 +89,7 @@ pub async fn launch_game(
         .map_err(|e| format!("Failed to write {}: {e}", pcgi_path.display()))?;
 
     // 5. Deploy (or remove) shim and launch
-    crate::game::launch_game(exe_path, windowed, &pcgi_path)?;
+    crate::game::launch_game(exe_path, &display_mode, &pcgi_path)?;
 
     // Close the launcher window.  Spawn a short-lived thread so the IPC
     // response can be flushed to the frontend before the window is torn down.

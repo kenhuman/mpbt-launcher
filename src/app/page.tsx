@@ -12,13 +12,24 @@ interface ClientConfig {
   gameServer: string;
 }
 
+const DISPLAY_MODES = [
+  { value: "fullscreen",        label: "Fullscreen (640×480 native)" },
+  { value: "window-640x480",    label: "Windowed 640×480" },
+  { value: "window-1024x768",   label: "Windowed 1024×768" },
+  { value: "window-1280x960",   label: "Windowed 1280×960" },
+  { value: "window-1920x1080",  label: "Windowed 1920×1080 (letterboxed)" },
+  { value: "window-fullscreen", label: "Windowed Fullscreen" },
+] as const;
+
+type DisplayModeValue = typeof DISPLAY_MODES[number]["value"];
+
 interface Prefs {
   username: string;
   password: string;
   webUrl: string;
   gameExe: string;
   savePassword: boolean;
-  windowed: boolean;
+  displayMode: DisplayModeValue;
 }
 
 interface NewsArticle {
@@ -32,22 +43,31 @@ interface UpdateInfo {
   install: () => Promise<void>;
 }
 
+function isValidDisplayMode(v: unknown): v is DisplayModeValue {
+  return DISPLAY_MODES.some((m) => m.value === v);
+}
+
 function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const p = JSON.parse(raw) as Partial<Prefs>;
+      const p = JSON.parse(raw) as Partial<Prefs> & { windowed?: boolean };
+      // Migrate old boolean windowed pref
+      const migratedMode: DisplayModeValue =
+        isValidDisplayMode(p.displayMode) ? p.displayMode
+        : p.windowed ? "window-640x480"
+        : "fullscreen";
       return {
         username:     p.username     ?? "",
         password:     p.savePassword ? (p.password ?? "") : "",
         webUrl:       p.webUrl       ?? DEFAULT_WEB_URL,
         gameExe:      p.gameExe      ?? DEFAULT_GAME,
         savePassword: p.savePassword ?? false,
-        windowed:     p.windowed     ?? false,
+        displayMode:  migratedMode,
       };
     }
   } catch { /* ignore */ }
-  return { username: "", password: "", webUrl: DEFAULT_WEB_URL, gameExe: DEFAULT_GAME, savePassword: false, windowed: false };
+  return { username: "", password: "", webUrl: DEFAULT_WEB_URL, gameExe: DEFAULT_GAME, savePassword: false, displayMode: "fullscreen" };
 }
 
 function savePrefs(prefs: Prefs) {
@@ -63,7 +83,7 @@ export default function LauncherPage() {
   const [webUrl,       setWebUrl]       = useState(DEFAULT_WEB_URL);
   const [gameExe,      setGameExe]      = useState(DEFAULT_GAME);
   const [savePassword, setSavePassword] = useState(false);
-  const [windowed,     setWindowed]     = useState(false);
+  const [displayMode,  setDisplayMode]  = useState<DisplayModeValue>("fullscreen");
   const [advanced,     setAdvanced]     = useState(false);
   const [hydrated,     setHydrated]     = useState(false);
 
@@ -93,7 +113,7 @@ export default function LauncherPage() {
     setWebUrl(p.webUrl);
     setGameExe(p.gameExe);
     setSavePassword(p.savePassword);
-    setWindowed(p.windowed);
+    setDisplayMode(p.displayMode);
     setHydrated(true);
 
     // Remove any leftover ddraw.dll shim on every startup so a direct run
@@ -153,8 +173,8 @@ export default function LauncherPage() {
   // Persist whenever any relevant value changes (after hydration)
   useEffect(() => {
     if (!hydrated) return;
-    savePrefs({ username, password, webUrl, gameExe, savePassword, windowed });
-  }, [hydrated, username, password, webUrl, gameExe, savePassword, windowed]);
+    savePrefs({ username, password, webUrl, gameExe, savePassword, displayMode });
+  }, [hydrated, username, password, webUrl, gameExe, savePassword, displayMode]);
 
   async function handleLaunch(e: FormEvent) {
     e.preventDefault();
@@ -174,7 +194,7 @@ export default function LauncherPage() {
         server: resolvedServer,
         apiUrl: resolvedApiUrl,
         gameExe,
-        windowed,
+        displayMode,
       });
       setStatus("launched");
     } catch (err) {
@@ -286,15 +306,25 @@ export default function LauncherPage() {
               Remember password
             </label>
 
-            <label className="flex items-center gap-2 text-xs text-neutral-500 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={windowed}
-                onChange={(e) => setWindowed(e.target.checked)}
-                className="accent-green-500"
-              />
-              Launch in windowed mode
-            </label>
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor="displayMode"
+                className="text-xs font-semibold uppercase tracking-widest text-neutral-400"
+              >
+                Display Mode
+              </label>
+              <select
+                id="displayMode"
+                value={displayMode}
+                onChange={(e) => setDisplayMode(e.target.value as DisplayModeValue)}
+                disabled={busy}
+                className="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
+              >
+                {DISPLAY_MODES.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </div>
 
             {/* Advanced settings toggle */}
             <button
