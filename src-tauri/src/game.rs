@@ -6,9 +6,9 @@
 /// For the dedicated `fullscreen` option we keep the stock EXE path, but still
 /// configure the shim for native fullscreen handling.
 ///
-/// All other display modes use a permanently-patched copy of the EXE
-/// (`<stem>_windowed.exe`) created once alongside the original. Two patches are
-/// applied to the copy:
+/// All other display modes use a version-keyed patched copy of the EXE
+/// (`<stem>_windowed_<source-fingerprint>.exe`) created alongside the original.
+/// Two patches are applied to the copy:
 ///   • the single-instance guard (JZ → JMP, one byte) so multiple simultaneous
 ///     instances are allowed
 ///   • the self-integrity CRC check bypass, because patching the guard changes
@@ -32,8 +32,12 @@ const ERROR_SHARING_VIOLATION: i32 = 32;
 
 /// Return the path of the windowed-mode EXE copy, creating it if needed.
 ///
-/// The copy is placed next to the original as `<stem>_windowed.exe`
-/// (e.g. `Mpbtwin.exe` → `Mpbtwin_windowed.exe`).
+/// The copy is placed next to the original as
+/// `<stem>_windowed_<source-fingerprint>.exe`.
+///
+/// Keying the sidecar to the original EXE bytes avoids reusing a stale patched
+/// copy after the client is upgraded in place (for example `v1.23` -> `v1.29`
+/// under the same `C:\MPBT` install path).
 ///
 /// The single-instance guard is a single `JZ` byte (`0x74`) changed to `JMP`
 /// (`0xEB`).  We locate it by scanning for the distinctive surrounding bytes:
@@ -42,19 +46,34 @@ const ERROR_SHARING_VIOLATION: i32 = 32;
 ///   85 C0 [74|EB] 15 6A 01 50
 ///           ^--- patch target (index 2)
 #[cfg(target_os = "windows")]
+fn source_fingerprint(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    let mut hash = FNV_OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+#[cfg(target_os = "windows")]
 fn windowed_exe(original: &std::path::Path) -> Result<std::path::PathBuf, String> {
-    // Build `<stem>_windowed.exe` next to the original.
+    let mut data = std::fs::read(original).map_err(|e| format!("Failed to read game EXE: {e}"))?;
+    let source_fingerprint = source_fingerprint(&data);
+
     let stem = original
         .file_stem()
         .ok_or("game_exe has no file stem")?
         .to_string_lossy();
-    let patched = original.with_file_name(format!("{stem}_windowed.exe"));
+    let patched = original.with_file_name(format!(
+        "{stem}_windowed_{source_fingerprint:016x}.exe"
+    ));
 
     const PATCH_IDX: usize = 2;
     const BYTE_JZ: u8 = 0x74;
     const BYTE_JMP: u8 = 0xEB;
-
-    let mut data = std::fs::read(original).map_err(|e| format!("Failed to read game EXE: {e}"))?;
 
     // Patch 1: single-instance guard (JZ → JMP).
     // Pattern: TEST EAX,EAX; Jcc +0x15; PUSH 1; PUSH EAX
@@ -68,9 +87,13 @@ fn windowed_exe(original: &std::path::Path) -> Result<std::path::PathBuf, String
             && w[5] == 0x01
             && w[6] == 0x50
     });
-    if let Some((offset, _)) = found {
-        data[offset + PATCH_IDX] = BYTE_JMP;
-    }
+    let (single_instance_offset, _) = found.ok_or_else(|| {
+        format!(
+            "Unsupported game EXE ({}): multi-instance signature not found",
+            original.display()
+        )
+    })?;
+    data[single_instance_offset + PATCH_IDX] = BYTE_JMP;
 
     // Patch 2: self-integrity CRC check bypass.
     // The game calls GetModuleFileNameA on itself, computes a CRC, and
@@ -93,13 +116,17 @@ fn windowed_exe(original: &std::path::Path) -> Result<std::path::PathBuf, String
     const CRC_PATCH: [u8; 11] = [
         0xB8, 0x01, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0x90, 0xC3,
     ];
-    if let Some((off, _)) = data
+    let (crc_offset, _) = data
         .windows(11)
         .enumerate()
         .find(|(_, w)| CRC_PATTERNS.iter().any(|p| w == p))
-    {
-        data[off..off + 11].copy_from_slice(&CRC_PATCH);
-    }
+        .ok_or_else(|| {
+            format!(
+                "Unsupported game EXE ({}): CRC bypass signature not found",
+                original.display()
+            )
+        })?;
+    data[crc_offset..crc_offset + 11].copy_from_slice(&CRC_PATCH);
 
     // Use create_new (O_CREAT | O_EXCL) so only one process wins the race.
     // If another launcher got here first, AlreadyExists means the copy is ready

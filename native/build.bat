@@ -23,11 +23,14 @@ if not exist %VCVARS% (
     exit /b 1
 )
 
-:: If cl.exe is already on PATH (e.g. set up by the CI ilammy/msvc-dev-cmd
-:: action) skip vcvarsall to avoid the VsDevCmd "already initialized" error.
+:: Only skip vcvarsall when both cl.exe and the MSVC include/lib environment
+:: are already present. Some shells expose cl.exe on PATH without INCLUDE/LIB,
+:: which still makes windows.h resolution fail.
 where cl.exe >nul 2>&1
-if %ERRORLEVEL% == 0 goto :build
+if %ERRORLEVEL% neq 0 goto :init_env
+if not "%INCLUDE%"=="" if not "%LIB%"=="" goto :build
 
+:init_env
 call %VCVARS% x86
 
 :build

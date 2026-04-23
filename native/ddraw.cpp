@@ -101,8 +101,20 @@ static void DbLog(const char* fmt, ...) {
     OutputDebugStringA("[ddraw_shim] ");
     OutputDebugStringA(buf);
     OutputDebugStringA("\n");
-    FILE* f = fopen("C:\\MPBT\\ddraw_shim.log", "a+");
-    if (f) { fputs(buf, f); fputc('\n', f); fclose(f); }
+    HANDLE logFile = CreateFileA(
+        "C:\\MPBT\\ddraw_shim.log",
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (logFile != INVALID_HANDLE_VALUE) {
+        DWORD written = 0;
+        WriteFile(logFile, buf, (DWORD)strlen(buf), &written, nullptr);
+        WriteFile(logFile, "\r\n", 2, &written, nullptr);
+        CloseHandle(logFile);
+    }
 }
 
 // ============================================================================
@@ -361,27 +373,22 @@ static LPARAM RemapMouseCoord(LPARAM lp) {
     return MAKELPARAM(gx, gy);
 }
 
-// Known addresses inside MPBTWIN.EXE (.data segment, image base 0x00400000)
-#define GAME_FLAGS_ADDR    ((volatile DWORD*)0x0047a7c8)  // bit0=render enabled, bit1=quit
-#define GAME_STATE_ADDR    ((volatile DWORD*)0x0047d05c)  // 0-2=no render, 3=lobby, 4=battle
-#define GAME_GUARD_ADDR    ((volatile DWORD*)0x0047ef60)  // state-4 guard (bit0 must be 1)
-#define GAME_SPRITES_ADDR  ((volatile DWORD*)0x004f669c)  // active sprite count (state 3)
-
 static void BlitToWindow() {
     if (!g_hwnd || !g_backDib.hdc) return;
     if (!ShouldPresentNow()) return;
     static int s_btwCount = 0;
     ++s_btwCount;
     if (s_btwCount % 50 == 0) {
-        DWORD flags   = *GAME_FLAGS_ADDR;
-        DWORD state   = *GAME_STATE_ADDR;
-        DWORD guard   = *GAME_GUARD_ADDR;
-        DWORD sprites = *GAME_SPRITES_ADDR;
         BYTE  cpx = 0;
         if (g_backDib.bits && g_backDib.w > 1 && g_backDib.h > 1)
             cpx = ((BYTE*)g_backDib.bits)[(g_backDib.h/2)*g_backDib.pitch + g_backDib.w/2];
-        DbLog("BTW #%d  state=%d flags=0x%08x guard=0x%x sprites=%d prim_center=0x%02x",
-              s_btwCount, (int)state, (unsigned)flags, (unsigned)guard, (int)sprites, (unsigned)cpx);
+        DbLog("BTW #%d prim_center=0x%02x back=%dx%d target=%dx%d",
+              s_btwCount,
+              (unsigned)cpx,
+              g_backDib.w,
+              g_backDib.h,
+              (g_targetW > 0) ? g_targetW : g_backDib.w,
+              (g_targetH > 0) ? g_targetH : g_backDib.h);
     }
     int winW = (g_targetW > 0) ? g_targetW : g_backDib.w;
     int winH = (g_targetH > 0) ? g_targetH : g_backDib.h;
@@ -389,9 +396,6 @@ static void BlitToWindow() {
     RenderToHDC(wdc, winW, winH);
     ReleaseDC(g_hwnd, wdc);
 }
-
-// Bit 1 of the flags word is the WinMain quit flag.
-#define GAME_FLAGS_ADDR_QUIT_BIT 0x02
 
 // Subclass WndProc: handle WM_PAINT from our DIB; remap mouse coords when
 // scaling is active; suppress WM_ACTIVATEAPP deactivation so the game's
@@ -429,11 +433,11 @@ static LRESULT CALLBACK ShimWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         DbLog("WM_ACTIVATE(WA_INACTIVE) suppressed -> WA_ACTIVE");
         wp = (wp & 0xFFFF0000) | WA_ACTIVE;
     }
-    // WM_DESTROY: force the game's quit flag so the WinMain loop exits.
+    // WM_DESTROY: restore the desktop mode and post WM_QUIT for the game loop.
     if (msg == WM_DESTROY) {
-        DbLog("WM_DESTROY: setting game quit flag");
+        DbLog("WM_DESTROY");
         RestoreNativeDisplayMode();
-        *GAME_FLAGS_ADDR |= GAME_FLAGS_ADDR_QUIT_BIT;
+        PostQuitMessage(0);
     }
     return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
 }
@@ -650,23 +654,12 @@ public:
             // Always log when src surface changes, first 10 total, and every 200th.
             bool newSrc = (src != s_lastSrc);
             if (newSrc || s_bltCount <= 10 || s_bltCount % 200 == 0) {
-                // Also dump game-internal buffer addresses for diagnostics
-                DWORD mainCtx  = *(volatile DWORD*)0x0047a378;
-                DWORD pxStruct = mainCtx ? *(volatile DWORD*)(mainCtx + 0x4C) : 0;
-                DWORD bitsA    = pxStruct ? *(volatile DWORD*)pxStruct : 0;
-                DWORD bitsB    = *(volatile DWORD*)0x004da2f0;
-                DWORD surfA    = pxStruct ? *(volatile DWORD*)(pxStruct + 0x14) : 0;
-                DWORD surfB    = *(volatile DWORD*)0x004da2f8;
-                DWORD dispSurf = *(volatile DWORD*)0x0047a7ec;
                 DbLog("Primary Blt #%d src=%p%s dst=(%d,%d %dx%d) center_px=0x%02x "
-                      "nonZero=%d firstNZ@%d=0x%02x bitsA=0x%08x bitsB=0x%08x "
-                      "srcBits=%p surfA=%08x surfB=%08x disp=%08x",
+                      "nonZero=%d firstNZ@%d=0x%02x srcBits=%p",
                       s_bltCount, src, newSrc ? " [NEW]" : "",
                       dx, dy, sw, sh, (unsigned)px,
                       nonZero, firstNZOff, (unsigned)firstNZVal,
-                      (unsigned)bitsA, (unsigned)bitsB,
-                      fs->dib().bits, (unsigned)surfA, (unsigned)surfB,
-                      (unsigned)dispSurf);
+                      fs->dib().bits);
                 s_lastSrc = src;
             }
             BlitToWindow();
@@ -1106,6 +1099,8 @@ BOOL WINAPI DllMain(HINSTANCE, DWORD fdwReason, LPVOID)
         // Config is loaded lazily on the first DirectDrawCreate call.
         DbLog("ddraw_shim loaded");
         PatchGameIAT();
+    } else if (fdwReason == DLL_PROCESS_DETACH) {
+        RestoreNativeDisplayMode();
     }
     return TRUE;
 }
