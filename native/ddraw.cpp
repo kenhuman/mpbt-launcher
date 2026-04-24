@@ -1099,8 +1099,6 @@ BOOL WINAPI DllMain(HINSTANCE, DWORD fdwReason, LPVOID)
         // Config is loaded lazily on the first DirectDrawCreate call.
         DbLog("ddraw_shim loaded");
         PatchGameIAT();
-    } else if (fdwReason == DLL_PROCESS_DETACH) {
-        RestoreNativeDisplayMode();
     }
     return TRUE;
 }

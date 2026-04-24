@@ -61,14 +61,14 @@ fn source_fingerprint(bytes: &[u8]) -> u64 {
 #[cfg(target_os = "windows")]
 fn windowed_exe(original: &std::path::Path) -> Result<std::path::PathBuf, String> {
     let mut data = std::fs::read(original).map_err(|e| format!("Failed to read game EXE: {e}"))?;
-    let source_fingerprint = source_fingerprint(&data);
+    let exe_fingerprint = source_fingerprint(&data);
 
     let stem = original
         .file_stem()
         .ok_or("game_exe has no file stem")?
         .to_string_lossy();
     let patched = original.with_file_name(format!(
-        "{stem}_windowed_{source_fingerprint:016x}.exe"
+        "{stem}_windowed_{exe_fingerprint:016x}.exe"
     ));
 
     const PATCH_IDX: usize = 2;
@@ -116,10 +116,16 @@ fn windowed_exe(original: &std::path::Path) -> Result<std::path::PathBuf, String
     const CRC_PATCH: [u8; 11] = [
         0xB8, 0x01, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0x90, 0xC3,
     ];
-    let (crc_offset, _) = data
+    let crc_offset = data
         .windows(11)
         .enumerate()
-        .find(|(_, w)| CRC_PATTERNS.iter().any(|p| w == p))
+        .find_map(|(offset, window)| {
+            if CRC_PATTERNS.iter().any(|pattern| window == pattern) || window == CRC_PATCH {
+                Some(offset)
+            } else {
+                None
+            }
+        })
         .ok_or_else(|| {
             format!(
                 "Unsupported game EXE ({}): CRC bypass signature not found",
