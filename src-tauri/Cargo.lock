@@ -2004,7 +2004,7 @@ dependencies = [
 
 [[package]]
 name = "mpbt-launcher"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
