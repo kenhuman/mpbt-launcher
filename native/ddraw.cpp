@@ -373,9 +373,9 @@ static LPARAM RemapMouseCoord(LPARAM lp) {
     return MAKELPARAM(gx, gy);
 }
 
-static void BlitToWindow() {
+static void BlitToWindow(bool forcePresent = false) {
     if (!g_hwnd || !g_backDib.hdc) return;
-    if (!ShouldPresentNow()) return;
+    if (!forcePresent && !ShouldPresentNow()) return;
     static int s_btwCount = 0;
     ++s_btwCount;
     if (s_btwCount % 50 == 0) {
@@ -439,7 +439,19 @@ static LRESULT CALLBACK ShimWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         RestoreNativeDisplayMode();
         PostQuitMessage(0);
     }
-    return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
+    LRESULT result = CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
+    switch (msg) {
+    case WM_LBUTTONUP:
+    case WM_RBUTTONUP:
+    case WM_MBUTTONUP:
+    case WM_LBUTTONDBLCLK:
+    case WM_KEYUP:
+    case WM_CHAR:
+    case WM_COMMAND:
+        BlitToWindow(true);
+        break;
+    }
+    return result;
 }
 
 // ============================================================================
@@ -589,7 +601,10 @@ public:
         *phdc = dib().hdc;
         return S_OK;
     }
-    HRESULT STDMETHODCALLTYPE ReleaseDC(HDC) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE ReleaseDC(HDC) override {
+        if (m_isPrimary || m_isBack) BlitToWindow(true);
+        return S_OK;
+    }
 
     HRESULT STDMETHODCALLTYPE GetAttachedSurface(LPDDSCAPS,
                                                   LPDIRECTDRAWSURFACE* pp) override {
